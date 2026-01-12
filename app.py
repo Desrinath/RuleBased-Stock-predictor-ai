@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import streamlit as st
 import yfinance as yf
@@ -32,24 +32,31 @@ if not GROQ_API_KEY:
 openai.api_key = GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
-MODEL = "openai/gpt-oss-20b"  # ✅ confirmed working
+MODEL = "openai/gpt-oss-20b"  # confirmed working
 
 # =========================
-# DATA FUNCTIONS
+# DATA FUNCTIONS (FIXED)
 # =========================
 def fetch_stock(symbol: str) -> pd.DataFrame:
-    end = datetime.utcnow()
-    start = end - timedelta(days=450)
-
+    # Use period instead of start/end (cloud-safe)
     df = yf.download(
         symbol,
-        start=start,
-        end=end,
+        period="2y",
         auto_adjust=True,
         progress=False
     )
 
-    # Fix Yahoo Finance MultiIndex columns
+    # NSE fallback
+    if df.empty and not symbol.endswith(".NS"):
+        df = yf.download(
+            symbol + ".NS",
+            period="2y",
+            auto_adjust=True,
+            progress=False
+        )
+        if not df.empty:
+            st.info(f"ℹ️ Using NSE symbol: {symbol}.NS")
+
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
@@ -77,7 +84,7 @@ def ask_ai(payload: dict) -> dict:
     prompt = f"""
 You are a disciplined equity research assistant.
 
-Return ONLY valid JSON in this format:
+Return ONLY valid JSON:
 
 {{
   "action": "BUY" | "HOLD" | "SELL",
@@ -89,10 +96,9 @@ Return ONLY valid JSON in this format:
 }}
 
 Rules:
-- BUY if price > SMA50 & SMA200 AND RSI between 45–65 AND MACD >= 0
-- SELL if price < SMA200 OR RSI < 40 OR MACD < 0
+- BUY if price > SMA50 & SMA200 and RSI 45–65 and MACD >= 0
+- SELL if price < SMA200 or RSI < 40 or MACD < 0
 - Otherwise HOLD
-- Be conservative if data is limited
 
 DATA:
 {json.dumps(payload, indent=2)}
@@ -109,7 +115,7 @@ DATA:
 # =========================
 # UI
 # =========================
-symbol = st.text_input("Stock Symbol", placeholder="AAPL, MSFT, TSLA")
+symbol = st.text_input("Stock Symbol", placeholder="AAPL, MSFT, TSLA, TCS")
 run = st.button("Analyze", type="primary")
 
 if run and symbol:
@@ -123,7 +129,7 @@ if run and symbol:
         st.stop()
 
     if len(df) < 60:
-        st.warning(f"⚠️ Limited data available ({len(df)} days). Results may be less accurate.")
+        st.warning(f"⚠️ Limited data available ({len(df)} days). Analysis may be less accurate.")
 
     df = compute_indicators(df)
     last = df.iloc[-1]
@@ -153,9 +159,6 @@ if run and symbol:
 
     st.markdown("### 🧠 Technical Summary")
     st.write(result["technical_summary"])
-
-    st.markdown("### 📘 Fundamental Summary")
-    st.write(result["fundamental_summary"])
 
     if result.get("risks"):
         st.markdown("### ⚠️ Risks")
