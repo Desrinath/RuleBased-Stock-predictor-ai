@@ -6,7 +6,7 @@ import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
-import openai   # THIS WILL WORK AFTER FIX BELOW
+import openai
 
 # =========================
 # PAGE CONFIG
@@ -32,14 +32,14 @@ if not GROQ_API_KEY:
 openai.api_key = GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
-MODEL = "openai/gpt-oss-20b"  # confirmed working
+MODEL = "openai/gpt-oss-20b"  # ✅ confirmed working
 
 # =========================
 # DATA FUNCTIONS
 # =========================
-def fetch_stock(symbol):
+def fetch_stock(symbol: str) -> pd.DataFrame:
     end = datetime.utcnow()
-    start = end - timedelta(days=420)
+    start = end - timedelta(days=450)
 
     df = yf.download(
         symbol,
@@ -49,18 +49,21 @@ def fetch_stock(symbol):
         progress=False
     )
 
+    # Fix Yahoo Finance MultiIndex columns
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
     return df
 
 
-def compute_indicators(df):
+def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     close = pd.Series(df["Close"].values.flatten(), index=df.index)
 
+    df["SMA20"] = close.rolling(20).mean()
     df["SMA50"] = close.rolling(50).mean()
     df["SMA200"] = close.rolling(200).mean()
-    df["RSI"] = RSIIndicator(close, 14).rsi()
+
+    df["RSI"] = RSIIndicator(close, window=14).rsi()
 
     macd = MACD(close)
     df["MACD"] = macd.macd()
@@ -70,11 +73,11 @@ def compute_indicators(df):
     return df
 
 
-def ask_ai(payload):
+def ask_ai(payload: dict) -> dict:
     prompt = f"""
 You are a disciplined equity research assistant.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON in this format:
 
 {{
   "action": "BUY" | "HOLD" | "SELL",
@@ -86,9 +89,10 @@ Return ONLY valid JSON:
 }}
 
 Rules:
-- BUY if price > SMA50 & SMA200 and RSI 45–65 and MACD >= 0
-- SELL if price < SMA200 or RSI < 40 or MACD < 0
+- BUY if price > SMA50 & SMA200 AND RSI between 45–65 AND MACD >= 0
+- SELL if price < SMA200 OR RSI < 40 OR MACD < 0
 - Otherwise HOLD
+- Be conservative if data is limited
 
 DATA:
 {json.dumps(payload, indent=2)}
@@ -114,9 +118,12 @@ if run and symbol:
     with st.spinner("Fetching stock data..."):
         df = fetch_stock(symbol)
 
-    if df.empty or len(df) < 200:
-        st.error("❌ Not enough historical data")
+    if df.empty:
+        st.error("❌ No historical data found for this symbol")
         st.stop()
+
+    if len(df) < 60:
+        st.warning(f"⚠️ Limited data available ({len(df)} days). Results may be less accurate.")
 
     df = compute_indicators(df)
     last = df.iloc[-1]
@@ -124,12 +131,13 @@ if run and symbol:
     payload = {
         "symbol": symbol,
         "price": float(last["Close"]),
-        "sma50": float(last["SMA50"]),
-        "sma200": float(last["SMA200"]),
-        "rsi": float(last["RSI"]),
-        "macd": float(last["MACD"]),
-        "macd_signal": float(last["MACD_SIGNAL"]),
-        "macd_hist": float(last["MACD_HIST"]),
+        "sma20": float(last["SMA20"]) if not pd.isna(last["SMA20"]) else None,
+        "sma50": float(last["SMA50"]) if not pd.isna(last["SMA50"]) else None,
+        "sma200": float(last["SMA200"]) if not pd.isna(last["SMA200"]) else None,
+        "rsi": float(last["RSI"]) if not pd.isna(last["RSI"]) else None,
+        "macd": float(last["MACD"]) if not pd.isna(last["MACD"]) else None,
+        "macd_signal": float(last["MACD_SIGNAL"]) if not pd.isna(last["MACD_SIGNAL"]) else None,
+        "macd_hist": float(last["MACD_HIST"]) if not pd.isna(last["MACD_HIST"]) else None,
         "as_of": datetime.utcnow().isoformat() + "Z",
     }
 
@@ -146,12 +154,17 @@ if run and symbol:
     st.markdown("### 🧠 Technical Summary")
     st.write(result["technical_summary"])
 
-    st.markdown("### ⚠️ Risks")
-    for r in result["risks"]:
-        st.write("•", r)
+    st.markdown("### 📘 Fundamental Summary")
+    st.write(result["fundamental_summary"])
 
-    st.markdown("### 📝 Notes")
-    st.write(result["notes"])
+    if result.get("risks"):
+        st.markdown("### ⚠️ Risks")
+        for r in result["risks"]:
+            st.write("•", r)
+
+    if result.get("notes"):
+        st.markdown("### 📝 Notes")
+        st.write(result["notes"])
 
 st.divider()
 st.caption("Yahoo Finance · Groq · openai/gpt-oss-20b · Streamlit")
