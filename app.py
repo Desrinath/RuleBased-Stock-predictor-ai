@@ -6,7 +6,7 @@ import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
-from openai import OpenAI
+import openai
 
 # =========================
 # PAGE CONFIG
@@ -21,25 +21,23 @@ st.title("📈 Stock Analyst AI (Groq)")
 st.caption("Educational purpose only – Not financial advice")
 
 # =========================
-# GROQ CLIENT
+# GROQ CONFIG
 # =========================
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    st.error("❌ GROQ_API_KEY missing in .streamlit/secrets.toml")
+    st.error("❌ GROQ_API_KEY not found in Streamlit Secrets")
     st.stop()
 
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
+openai.api_key = GROQ_API_KEY
+openai.api_base = "https://api.groq.com/openai/v1"
 
-MODEL = "openai/gpt-oss-20b"  # ✅ CONFIRMED WORKING MODEL
+MODEL = "openai/gpt-oss-20b"  # ✅ confirmed working
 
 # =========================
 # DATA FUNCTIONS
 # =========================
-def fetch_stock(symbol: str) -> pd.DataFrame:
+def fetch_stock(symbol):
     end = datetime.utcnow()
     start = end - timedelta(days=420)
 
@@ -51,19 +49,18 @@ def fetch_stock(symbol: str) -> pd.DataFrame:
         progress=False
     )
 
-    # Fix Yahoo Finance MultiIndex issue
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
     return df
 
 
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def compute_indicators(df):
     close = pd.Series(df["Close"].values.flatten(), index=df.index)
 
     df["SMA50"] = close.rolling(50).mean()
     df["SMA200"] = close.rolling(200).mean()
-    df["RSI"] = RSIIndicator(close, window=14).rsi()
+    df["RSI"] = RSIIndicator(close, 14).rsi()
 
     macd = MACD(close)
     df["MACD"] = macd.macd()
@@ -73,7 +70,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def ask_ai(payload: dict) -> dict:
+def ask_ai(payload):
     prompt = f"""
 You are a disciplined equity research assistant.
 
@@ -92,19 +89,18 @@ Rules:
 - BUY if price > SMA50 & SMA200 and RSI 45–65 and MACD >= 0
 - SELL if price < SMA200 or RSI < 40 or MACD < 0
 - Otherwise HOLD
-- Be conservative if signals conflict
 
 DATA:
 {json.dumps(payload, indent=2)}
 """
 
-    response = client.chat.completions.create(
+    response = openai.ChatCompletion.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )
 
-    return json.loads(response.choices[0].message.content)
+    return json.loads(response["choices"][0]["message"]["content"])
 
 # =========================
 # UI
@@ -150,17 +146,12 @@ if run and symbol:
     st.markdown("### 🧠 Technical Summary")
     st.write(result["technical_summary"])
 
-    st.markdown("### 📘 Fundamental Summary")
-    st.write(result["fundamental_summary"])
+    st.markdown("### ⚠️ Risks")
+    for r in result["risks"]:
+        st.write("•", r)
 
-    if result.get("risks"):
-        st.markdown("### ⚠️ Risks")
-        for r in result["risks"]:
-            st.write("•", r)
-
-    if result.get("notes"):
-        st.markdown("### 📝 Notes")
-        st.write(result["notes"])
+    st.markdown("### 📝 Notes")
+    st.write(result["notes"])
 
 st.divider()
 st.caption("Yahoo Finance · Groq · openai/gpt-oss-20b · Streamlit")
