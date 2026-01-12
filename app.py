@@ -6,7 +6,7 @@ import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
-import openai
+import openai   # THIS WILL WORK AFTER FIX BELOW
 
 # =========================
 # PAGE CONFIG
@@ -32,7 +32,7 @@ if not GROQ_API_KEY:
 openai.api_key = GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
-MODEL = "openai/gpt-oss-20b"  # ✅ confirmed working
+MODEL = "openai/gpt-oss-20b"  # confirmed working
 
 # =========================
 # DATA FUNCTIONS
